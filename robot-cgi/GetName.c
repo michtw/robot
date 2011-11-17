@@ -5,6 +5,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 #include <errno.h>
+#include <time.h>
 
 #include "cgic.h"
 #include "robot.h"
@@ -16,8 +17,14 @@ int getName(char *name)
     size_t addr_length;
     int len;
     int i;
-
     char buf[512];
+
+    struct tm *local;
+    time_t t;
+
+    t = time(NULL);
+    local = localtime(&t);
+    fprintf(cgiOut, "Local time and date: %s<BR>\n", asctime(local));
 
     // CGI to Service-2.
     const unsigned char request_cmd[] = {0xF1, 0xF2, 0x07, 0x32, 0xA1, 0x03, 0xC0};

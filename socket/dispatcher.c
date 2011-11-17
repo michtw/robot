@@ -1,11 +1,3 @@
-/* userver.c - Simple Unix Domain Socket server */
-
-/* Waits for a connection on the ./sample-socket Unix domain
-   socket. Once a connection has been established, copy data
-   from the socket to stdout until the other end closes the
-   connection, and then wait for another connection to the
-   socket. */
-
 #include <stdio.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -45,9 +37,13 @@ int bypass2cgi(int conn, char *data, int len)
 {
 	int number;
 
+	printf("%s: conn: %d\n", __func__, conn);
 	assert(conn > 0);
 
 	number = write(conn, data, len);  // Pass response to CGI.
+	if (number < 0) {
+		perror("write");
+	}
 	printf("Bypass response to CGI.  Written: %d\n", number);
 	return 0;
 }
@@ -55,13 +51,15 @@ int bypass2cgi(int conn, char *data, int len)
 /*
  *  Just bypass data here.
  */
-#if 23
 int cgi2service(int cgi_sock, char *data, int len, char *serv_path) 
 {
 	int sock;
 	struct sockaddr_un address;
 	size_t addr_length;
 	int number;
+	fd_set ready;        
+	struct timeval to;
+
         char buf[256];
 
 	if ((sock = socket(PF_UNIX, SOCK_STREAM, 0)) < 0) {
@@ -86,135 +84,31 @@ int cgi2service(int cgi_sock, char *data, int len, char *serv_path)
 	number = read(sock, buf, sizeof(buf));  // Read ACK from service.
 	printf("Read ACK from service. read: %d\n", number);
 
-	number = write(cgi_sock, buf, number);  // Pass ACK to CGI.
-	printf("Pass ACK to CGI. written: %d\n", number);
-
-	printf("%s", "Close socket.\n");
-	close(sock);
-
-	return 0;
-}
-#else
-int cgi2service2(int conn, char *data, int len) 
-{
-	struct sockaddr_un address;
-	int sock;
-	size_t addr_length;
-	int number;
-        char buf[1024];
-
-	assert(conn > 0);
-
-	if ((sock = socket(PF_UNIX, SOCK_STREAM, 0)) < 0) {
-		perror("socket");
-		return 1;
+#if 23
+	FD_ZERO(&ready);
+	FD_SET(cgi_sock, &ready);
+	to.tv_sec = 3;
+	printf("Start write ACK. 3 seconds timeout.\n");
+	if (select(cgi_sock + 1, 0, &ready, 0, &to) < 0) {
+		perror("select");
+	}
+	if (FD_ISSET(cgi_sock, &ready)) {
+	        number = write(cgi_sock, buf, number);  // Pass ACK to CGI.
+	} else {
+		printf("Cannot write ACK to CGI.\n");
 	}
 
-	address.sun_family = AF_UNIX;    /* Unix domain socket */
-	strcpy(address.sun_path, DIS_SER2_SOCKET_FILE);
-
-	/* The total length of the address includes the sun_family
-	   element */
-	addr_length = sizeof(address.sun_family) + strlen(address.sun_path);
-
-	if (connect(sock, (struct sockaddr *) &address, addr_length)) {
-		perror("connect");
-		return 1;
-	}
-
-	number = write(sock, data, len);  // Pass request command to service-2.
-	printf("written: %d\n", number);
-	number = read(sock, buf, sizeof(buf));  // Read ACK from service-2.
-	printf("read: %d\n", number);
-
-	number = write(conn, data, len);  // Pass ACK to CGI.
-	printf("Pass ACK to CGI. written: %d\n", number);
-	printf("%s", "Close socket.\n");
-	close(sock);
-
-	return 0;
-}
-
-int cgi2service4(int conn, char *data, int len) 
-{
-	struct sockaddr_un address;
-	int sock;
-	size_t addr_length;
-	int number;
-        char buf[1024];
-
-	if ((sock = socket(PF_UNIX, SOCK_STREAM, 0)) < 0) {
-		perror("socket");
-		return 1;
-	}
-
-	address.sun_family = AF_UNIX;    /* Unix domain socket */
-	strcpy(address.sun_path, DIS_SER4_SOCKET_FILE);
-
-	/* The total length of the address includes the sun_family
-	   element */
-	addr_length = sizeof(address.sun_family) + strlen(address.sun_path);
-
-	if (connect(sock, (struct sockaddr *) &address, addr_length)) {
-		perror("connect");
-		return 1;
-	}
-
-	number = write(sock, data, len);  // Pass request command to service-4.
-	printf("Pass request command to service-4. Written: %d\n", number);
-
-	number = read(sock, buf, sizeof(buf));  // Read ACK from service-4.
-	printf("Read ACK from service-4. read: %d\n", number);
-
-	number = write(conn, data, len);  // Pass ACK to CGI.
-	printf("Pass ACK to CGI. written: %d\n", number);
-
-	printf("%s", "Close socket.\n");
-	close(sock);
-
-	return 0;
-}
-
-int cgi2stm(int conn, char *data, int len)
-{
-	struct sockaddr_un address;
-	int sock;
-	size_t addr_length;
-	int number;
-        char buf[1024];
-
-	if ((sock = socket(PF_UNIX, SOCK_STREAM, 0)) < 0) {
-		perror("socket");
-		return 1;
-	}
-
-	address.sun_family = AF_UNIX;    /* Unix domain socket */
-	strcpy(address.sun_path, DIS_STM_SOCKET_FILE);
-
-	/* The total length of the address includes the sun_family
-	   element */
-	addr_length = sizeof(address.sun_family) + strlen(address.sun_path);
-
-	if (connect(sock, (struct sockaddr *) &address, addr_length)) {
-		perror("connect");
-		return 1;
-	}
-
-	number = write(sock, data, len);  // Pass request command to STM service.
-	printf("[STM] Pass CGI request to STM. Written: %d\n", number);
-
-	number = read(sock, buf, sizeof(buf));  // Read ACK from STM.
-	printf("[STM] Read ACK from STM. Read: %d\n", number);
-
-	number = write(conn, data, len);  // Pass ACK to CGI.
-	printf("[STM] Pass ACK to CGI. Written: %d\n", number);
-
-	printf("%s", "[STM] Close socket.\n");
-	close(sock);
-
-	return 0;
-}
 #endif
+	if (number < 0) {
+		perror("write");
+	}
+	printf("Pass ACK to CGI. Written: %d cgi_sock: %d\n", number, cgi_sock);
+
+	printf("%s", "Close socket.\n");
+	close(sock);
+
+	return 0;
+}
 
 void *cgi_incoming(void *ptr)
 {
@@ -224,7 +118,7 @@ void *cgi_incoming(void *ptr)
 	int amount;
 	fd_set ready;
 	struct timeval to;
-        char buf[1024];
+        char buf[512];
         int i;
         int path;
 
@@ -270,7 +164,7 @@ void *cgi_incoming(void *ptr)
 
       */
 
-	if (listen(sock, 5)) {
+	if (listen(sock, SOMAXCONN)) {
 		perror("listen");
 		exit(1);
 	}
@@ -293,7 +187,7 @@ void *cgi_incoming(void *ptr)
 				perror("accept");
 				continue;
 			}
-			printf("---- Dispatcher getting data from CGI\n");
+			printf("---- Dispatcher getting data from CGI. cgi_sock: %d\n", cgi_sock);
 
 			memset(buf, '\0', sizeof(buf));
 			amount = read(conn, buf, sizeof(buf)); // CGI request.
@@ -439,6 +333,7 @@ void *service2_incoming(void *ptr)
 	socklen_t addr_length;
 	int amount;
 	fd_set ready;
+	fd_set ready2;
 	struct timeval to;
         char buf[512];
         int i;
@@ -466,7 +361,7 @@ void *service2_incoming(void *ptr)
 	chmod(SER2_DIS_SOCKET_FILE, S_IRUSR | S_IWUSR | S_IXUSR | S_IRGRP | 
                                     S_IWGRP | S_IXGRP | S_IROTH | S_IWOTH | S_IXOTH);
 
-	if (listen(sock, 5)) {
+	if (listen(sock, SOMAXCONN)) {
 		perror("listen");
 		exit(1);
 	}
@@ -490,7 +385,7 @@ void *service2_incoming(void *ptr)
 			printf("    ---- Dispatcher getting data from Service-2\n");
 
 			memset(buf, '\0', sizeof(buf));
-			amount = read(conn, buf, sizeof(buf)); // Service-4 request.
+			amount = read(conn, buf, sizeof(buf)); // Service-2 request.
 			printf("    Service-2 request(%d): ", amount);
 			for (i = 0; i < amount; i++) {
 				printf("0x%02x ", buf[i] & 0xff);
@@ -506,9 +401,27 @@ void *service2_incoming(void *ptr)
 
 			printf("    ---- done\n");
 			
-			amount = read(cgi_sock, buf, sizeof(buf));  // Read ACK from CGI.
-			close(cgi_sock);
-                        printf("Read ACK from CGI. amount: %d\n", amount);
+#if 23
+			FD_ZERO(&ready2);
+			FD_SET(cgi_sock, &ready2);
+			to.tv_sec = 2;
+			printf("Start read ACK. 2 seconds timeout.\n");
+			if (select(cgi_sock + 1, &ready2, 0, 0, &to) < 0) {
+				perror("select");
+				close(cgi_sock);
+				continue;
+			}
+		        if (FD_ISSET(cgi_sock, &ready2)) {
+				amount = read(cgi_sock, buf, sizeof(buf));  // Read ACK from CGI.
+				close(cgi_sock);
+				printf("Read ACK from CGI. amount: %d\n", amount);
+			} else {
+			        printf("Cannot get ACK from CGI.\n");
+				close(cgi_sock);
+                                close(conn);
+				continue;
+			}
+#endif
 
 			amount = write(conn, buf, amount);     // Bypass ACK to Service-2.
 			printf("Bypass ACK to Service-2. amount: %d\n", amount);
@@ -543,8 +456,7 @@ void *stm_incoming(void *ptr)
 	address.sun_family = AF_UNIX;       /* Unix domain socket */
 	strcpy(address.sun_path, STM_DIS_SOCKET_FILE);
 
-	/* The total length of the address includes the sun_family
-	   element */
+	/* The total length of the address includes the sun_family element */
 	addr_length = sizeof(address.sun_family) + strlen(address.sun_path);
 
 	if (bind(sock, (struct sockaddr *) &address, addr_length)) {
