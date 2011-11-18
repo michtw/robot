@@ -6,23 +6,27 @@
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <string.h>
+#include <errno.h>
 
 #include "config.h"
 #include "service2.h"
 
 char wifi_name[128];
 
-static void get_name(void)
+static void get_name(int sock)
 {
-    struct sockaddr_un address;
-    int sock;
-    size_t addr_length;
+//    struct sockaddr_un address;
+//    int sock;
+//    size_t addr_length;
     int len;
     int i, idx = 0;
     short sum = 0x00;
  
     char buf[128];
 
+    fd_set ready;        
+    struct timeval to;
+#if 0
     if ((sock = socket(PF_UNIX, SOCK_STREAM, 0)) < 0) {
 	    perror("socket");
 	    return;
@@ -39,6 +43,7 @@ static void get_name(void)
 	    perror("connect");
 	    return;
     }
+#endif
 
     buf[idx++] = 0xF1; 
     buf[idx++] = 0xF2; 
@@ -59,21 +64,38 @@ static void get_name(void)
     }
     buf[idx++] = sum & 0xff;
 
-    printf("Get name response: ");
+    printf("GetName response: ");
     for (i = 0; i < idx; i++) {
 	    printf("0x%02x ", buf[i] & 0xff);
     }
     printf("\n");
 
+#if 23
+    FD_ZERO(&ready);
+    FD_SET(sock, &ready);
+    to.tv_sec = 3;
+    if (select(sock + 1, 0, &ready, 0, &to) < 0) {
+	    perror("select");
+    }
+    if (FD_ISSET(sock, &ready)) {
+        len = write(sock, buf, idx);
+        printf("Get name. Written: %d. \n", len);
+    }
+#else
     len = write(sock, buf, idx);
-    printf("Get name. Written: %d. \n", len);
+#endif
 
     memset(buf, '\0', sizeof(buf));
     len = read(sock, buf, sizeof(buf)); // Read ACK.
+
+    if (len < 0) {
+        printf("Read error: %s\n", strerror(errno));
+
+    }
     printf("ACK read: len: %d\n", len);
 
-    printf("%s", "Close socket.\n");
-    close(sock);
+//    printf("%s", "Close socket.\n");
+//    close(sock);
 }
 
 static void set_name(char *name, int len)
@@ -82,20 +104,20 @@ static void set_name(char *name, int len)
     memcpy(wifi_name, name, len);
 }
 
-void handle_cmd(char *buf)
+void handle_cmd(int sock, unsigned char *buf)
 {
     int cmd = ((buf[4] & 0xff) << 8) | (buf[5] & 0xff);
 
     switch (cmd) {
 	    case SP_GetName:
 		    printf("GetName\n");
-		    get_name();
+		    get_name(sock);
 		    break;
 	    case SP_SetName: {
 		    char name[64];
 		    int len = buf[2];
                     memset(name, '\0', sizeof(name));
-		    strncpy(name, &(buf[6]), len - 7); // Minus header and checksum.
+		    strncpy(name, (char *)&(buf[6]), len - 7); // Minus header and checksum.
 		    printf("SetName. Name: %s\n", name);
 		    set_name(name, len - 7);
 	    }	    break;
@@ -105,6 +127,85 @@ void handle_cmd(char *buf)
     }
 }
 
+void *conn(void *ptr)
+{
+    int sock;
+    struct sockaddr_un address;
+    size_t addr_length;
+    int amount;
+    fd_set ready_r;        
+    struct timeval to;
+    int i;
+
+    unsigned char buf[256];
+
+    const unsigned char register_cmd[] = {0xF1, 0xF2, 0x07, 0x20, 0x90, 0x01, 0x9B};
+    const unsigned char ack_cmd[] = {0xF1, 0xF2, 0x07, 0x23, 0x90, 0x03, 0xA0};
+
+    if ((sock = socket(PF_UNIX, SOCK_STREAM, 0)) < 0) {
+	    perror("socket");
+	    exit(1);
+    }
+
+    address.sun_family = AF_UNIX;    /* Unix domain socket */
+    strcpy(address.sun_path, SER2_DIS_SOCKET_FILE);
+
+    /* The total length of the address includes the sun_family element */
+    addr_length = sizeof(address.sun_family) + strlen(address.sun_path);
+
+    if (connect(sock, (struct sockaddr *) &address, addr_length)) {
+	    printf("Cannot register service. (%s)\n", strerror(errno));
+	    exit(1);
+    }
+
+    amount = write(sock, register_cmd, sizeof(register_cmd));  // Register of service.
+    amount = read(sock, buf, sizeof(buf));  // Read ACK from dispatcher.
+    if (amount <= 0) {
+	    printf("Cannot register service.\n");
+	    exit(1);
+    }
+
+    //printf("Register done.\n");
+
+    do {
+	FD_ZERO(&ready_r);
+	FD_SET(sock, &ready_r);
+	to.tv_sec = 3;
+	if (select(sock + 1, &ready_r, 0, 0, &to) < 0) {
+		perror("select");
+	}
+	if (FD_ISSET(sock, &ready_r)) {
+		memset(buf, '\0', sizeof(buf));
+		amount = read(sock, buf, sizeof(buf)); // Dispatcher request.
+		if (amount < 0) {
+			perror("read");
+			continue;
+		}
+		printf("[S2] Dispatcher request(%d): ", amount);
+		for (i = 0; i < amount; i++) {
+			printf("0x%02x ", buf[i] & 0xff);
+		}
+		printf("\n");
+
+		amount = write(sock, ack_cmd, sizeof(ack_cmd));
+		//close(sock);
+		printf("ACK write amount: %d\n", amount);
+
+		printf("[S2] ---- done\n");
+
+		usleep(100000); // To wait ACK complete.
+
+		handle_cmd(sock, buf);
+	} 
+    } while (1);
+
+    printf("Close socket.\n");
+    close(sock);
+
+    return 0;
+}
+
+#if 0
 void *dispatcher_incoming(void *ptr)
 {
     struct sockaddr_un address;
@@ -113,7 +214,7 @@ void *dispatcher_incoming(void *ptr)
     int amount;
     fd_set ready;
     struct timeval to;
-    char buf[512];
+    unsigned char buf[512];
     int i;
     //int cmd;
 
@@ -190,6 +291,7 @@ void *dispatcher_incoming(void *ptr)
 
     close(sock);
 }
+#endif
 
 void *bottom_incoming(void *ptr)
 {
@@ -200,22 +302,27 @@ void *bottom_incoming(void *ptr)
 
 int main(int argc, char *argv[]) 
 {
-        int iret_dispatcher, iret_bottom;
-	pthread_t thread_dispatcher;  // Accept for Dispatcher connection.
+        int iret_bottom, iret_conn;
+//        int iret_dispatcher;
+//	pthread_t thread_dispatcher;  // Accept for Dispatcher connection.
 	pthread_t thread_bottom;    // Accept for Bottom connection.
+	pthread_t thread_conn;    // Accept for Bottom connection.
 
 	memset(wifi_name, '\0', sizeof(wifi_name));
         memcpy(wifi_name, "Unknow", strlen("Unknow"));
 
-        iret_dispatcher = pthread_create(&thread_dispatcher, NULL, dispatcher_incoming, (void *)NULL);
+//        iret_dispatcher = pthread_create(&thread_dispatcher, NULL, dispatcher_incoming, (void *)NULL);
         iret_bottom = pthread_create(&thread_bottom, NULL, bottom_incoming, (void *)NULL);
+        iret_conn = pthread_create(&thread_conn, NULL, conn, (void *)NULL);
 
-        pthread_join(thread_dispatcher, NULL);
+//        pthread_join(thread_dispatcher, NULL);
         pthread_join(thread_bottom, NULL); 
+        pthread_join(thread_conn, NULL); 
 
 
-        printf("Thread dispatcher returns: %d\n", iret_dispatcher);
+//        printf("Thread dispatcher returns: %d\n", iret_dispatcher);
         printf("Thread bottom returns: %d\n", iret_bottom);
+        printf("Thread conn returns: %d\n", iret_conn);
 
         return 0;
 }

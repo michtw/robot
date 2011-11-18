@@ -15,7 +15,7 @@ static int is_ack(unsigned char *buf)
     // {0xF1, 0xF2, 0x07, 0x23, 0x90, 0x03, 0xA0}	
     //  0xf1  0xf2  0x07  0x34  0xa0 0x02 0xc0
     if ((buf[0] == 0xF1) && (buf[1] == 0xF2) && (buf[2] == 0x07) && 
-        (buf[3] == 0x23) && (buf[4] == 0x90) && (buf[5] == 0x03) && (buf[6] == 0xA0)) {
+        (buf[3] == 0x43) && (buf[4] == 0x90) && (buf[5] == 0x03) && (buf[6] == 0xC0)) {
 	    return 0;
     } else {
 	    return 1;
@@ -62,34 +62,33 @@ int getSsid(char *ssid)
 	    return(1);
     }
 
-    fprintf(cgiOut, "written: %d.<br>\n", len);
+//    fprintf(cgiOut, "written: %d.<br>\n", len);
     memset(buf, '\0', sizeof(buf));
 
     len = read(sock, buf, sizeof(buf)); // Read ACK.
 /*
     if (is_ack(buf)) {
-        fprintf(cgiOut, "Command error.<BR>\n");
-	return 1;
+        //fprintf(cgiOut, "Command error.<BR>\n", len);
+	 return 1;
     }
  */
-    fprintf(cgiOut, "ACK read: %d.  [\n", len);
+//    fprintf(cgiOut, "ACK read: %d.  [\n", len);
 
     for (i = 0; i < len; i++) {
-        fprintf(cgiOut, "0x%02x ", buf[i] & 0xff);
+//        fprintf(cgiOut, "0x%02x ", buf[i] & 0xff);
     }
 
-    fprintf(cgiOut, "]<br>");
+//    fprintf(cgiOut, "]<br>");
 
     len = read(sock, buf, sizeof(buf)); // Read Wi-Fi SSID.
 
     strncpy(ssid, &(buf[6]), len - 7); // minus header length
-    printf("SSID read: (len: %d) \"%s\"<br>\n", len, ssid);
-
+//    printf("SSID read: (len: %d) \"%s\"<br>\n", len, ssid);
 
     len = write(sock, ack_cmd, sizeof(ack_cmd));
-    fprintf(cgiOut, "ACK written: %d.<br>\n", len);
+//    fprintf(cgiOut, "ACK written: %d.<br>\n", len);
 
-    fprintf(cgiOut, "%s", "Close socket.\n");
+//    fprintf(cgiOut, "%s", "Close socket.\n");
     close(sock);
 
     return 0;
@@ -101,16 +100,20 @@ int cgiMain()
         int rtn;
 
 	/* Send the content type, letting the browser know this is HTML */
-	cgiHeaderContentType("text/html");
-	fprintf(cgiOut, "<HTML><HEAD>\n");
-	fprintf(cgiOut, "<TITLE>Robot GetSsid</TITLE></HEAD>\n");
+	cgiHeaderContentType("application/json");
+//	cgiHeaderContentType("text/html");
+//	fprintf(cgiOut, "<HTML><HEAD>\n");
+//	fprintf(cgiOut, "<TITLE>Robot GetSsid</TITLE></HEAD>\n");
 
 	memset(ssid, '\0', sizeof(ssid));
 	rtn = getSsid(ssid);
 	if (rtn == 0) {
-	        fprintf(cgiOut, "<BODY><H1>SSID: %s</H1>\n", ssid);
+                //char str[128];
+                //sprintf(str, "{\"ssid\":\"%s\"}", ssid);
+	        fprintf(cgiOut, "{\"ssid\":\"%s\"}", ssid);
+	        //fprintf(cgiOut, "<BODY><H1>SSID: %s</H1>\n", ssid);
         }
-	fprintf(cgiOut, "</BODY></HTML>\n");
+//	fprintf(cgiOut, "</BODY></HTML>\n");
 	return 0;
 }
 

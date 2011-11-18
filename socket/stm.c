@@ -5,6 +5,7 @@
 #include <pthread.h>
 #include <stdlib.h>
 #include <sys/stat.h>
+#include <errno.h>
 
 #include "config.h"
 #include "stm.h"
@@ -78,8 +79,7 @@ void get_moving_status(void)
     address.sun_family = AF_UNIX;    /* Unix domain socket */
     strcpy(address.sun_path, STM_DIS_SOCKET_FILE);
 
-    /* The total length of the address includes the sun_family
-       element */
+    /* The total length of the address includes the sun_family element */
     addr_length = sizeof(address.sun_family) + strlen(address.sun_path);
 
     if (connect(sock, (struct sockaddr *) &address, addr_length)) {
@@ -120,8 +120,11 @@ void get_moving_status(void)
     close(sock);
 }
 
-void handle_cmd(int cmd, char parm)
+void handle_cmd(int sock, unsigned char *buf)
 {
+    int cmd = ((buf[4] & 0xff) << 8) | (buf[5] & 0xff);
+    int parm = buf[6];
+
     switch (cmd) {
 	    case AutoDrive:
 		    auto_drive(parm);
@@ -144,6 +147,7 @@ void handle_cmd(int cmd, char parm)
     }
 }
 
+#if 0
 void *dispatcher_incoming(void *ptr)
 {
     struct sockaddr_un address;
@@ -229,6 +233,85 @@ void *dispatcher_incoming(void *ptr)
 
     close(sock);
 }
+#endif
+
+void *conn(void *ptr)
+{
+    int sock;
+    struct sockaddr_un address;
+    size_t addr_length;
+    int amount;
+    fd_set ready_r;        
+    struct timeval to;
+    int i;
+
+    unsigned char buf[256];
+
+    const unsigned char register_cmd[] = {0xF1, 0xF2, 0x07, 0x10, 0x90, 0x01, 0x8B};
+    const unsigned char ack_cmd[] = {0xF1, 0xF2, 0x07, 0x13, 0x90, 0x03, 0x90};
+
+    if ((sock = socket(PF_UNIX, SOCK_STREAM, 0)) < 0) {
+	    perror("socket");
+	    exit(1);
+    }
+
+    address.sun_family = AF_UNIX;    /* Unix domain socket */
+    strcpy(address.sun_path, STM_DIS_SOCKET_FILE);
+
+    /* The total length of the address includes the sun_family element */
+    addr_length = sizeof(address.sun_family) + strlen(address.sun_path);
+
+    if (connect(sock, (struct sockaddr *) &address, addr_length)) {
+	    printf("Cannot register service. (%s)\n", strerror(errno));
+	    exit(1);
+    }
+
+    amount = write(sock, register_cmd, sizeof(register_cmd));  // Register of service.
+    amount = read(sock, buf, sizeof(buf));  // Read ACK from dispatcher.
+    if (amount <= 0) {
+	    printf("Cannot register service.\n");
+	    exit(1);
+    }
+
+    //printf("Register done.\n");
+
+    do {
+	FD_ZERO(&ready_r);
+	FD_SET(sock, &ready_r);
+	to.tv_sec = 3;
+	if (select(sock + 1, &ready_r, 0, 0, &to) < 0) {
+		perror("select");
+	}
+	if (FD_ISSET(sock, &ready_r)) {
+		memset(buf, '\0', sizeof(buf));
+		amount = read(sock, buf, sizeof(buf)); // Dispatcher request.
+		if (amount < 0) {
+			perror("read");
+			continue;
+		}
+		printf("[STM] Dispatcher request(%d): ", amount);
+		for (i = 0; i < amount; i++) {
+			printf("0x%02x ", buf[i] & 0xff);
+		}
+		printf("\n");
+
+		amount = write(sock, ack_cmd, sizeof(ack_cmd));
+		//close(sock);
+		printf("ACK write amount: %d\n", amount);
+
+		printf("[STM] ---- done\n");
+
+		usleep(100000);
+
+		handle_cmd(sock, buf);
+	} 
+    } while (1);
+
+    printf("Close socket.\n");
+    close(sock);
+
+    return 0;
+}
 
 void *bottom_incoming(void *ptr)
 {
@@ -239,18 +322,23 @@ void *bottom_incoming(void *ptr)
 
 int main(int argc, char *argv[]) 
 {
-    int iret_dispatcher, iret_bottom;
-    pthread_t thread_dispatcher;  // Accept for Dispatcher connection.
+//    int iret_dispatcher;
+    int iret_bottom, iret_conn;
+//    pthread_t thread_dispatcher;  // Accept for Dispatcher connection.
     pthread_t thread_bottom;      // Accept for Bottom connection.
+    pthread_t thread_conn;
 
-    iret_dispatcher = pthread_create(&thread_dispatcher, NULL, dispatcher_incoming, (void *)NULL);
+//    iret_dispatcher = pthread_create(&thread_dispatcher, NULL, dispatcher_incoming, (void *)NULL);
     iret_bottom = pthread_create(&thread_bottom, NULL, bottom_incoming, (void *)NULL);
+    iret_conn = pthread_create(&thread_conn, NULL, conn, (void *)NULL);
 
-    pthread_join(thread_dispatcher, NULL);
+//    pthread_join(thread_dispatcher, NULL);
     pthread_join(thread_bottom, NULL); 
+    pthread_join(thread_conn, NULL); 
 
-    printf("Thread dispatcher returns: %d\n", iret_dispatcher);
+//    printf("Thread dispatcher returns: %d\n", iret_dispatcher);
     printf("Thread bottom returns: %d\n", iret_bottom);
+    printf("Thread conn returns: %d\n", iret_conn);
     return 0;
 }
 

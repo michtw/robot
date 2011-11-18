@@ -56,4 +56,7 @@
 #define GetBirthday     0xA705
 #define GetFeeling      0xA706
 
+#define REGISTER        0x9001
+#define ACK             0x9003
+
 #endif
